@@ -1,14 +1,15 @@
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 import time
 import sqlite3
 from datetime import datetime
-from typing import TypedDict, List, Dict, Any
+from typing import TypedDict, List
 import schedule
 from pync import Notifier
 from flask import Flask, render_template_string, request
 import threading
 import webbrowser
+
 
 class Product(TypedDict):
     name: str
@@ -18,6 +19,7 @@ class Product(TypedDict):
     is_sold_out: bool
     product_number: str
 
+
 # Configuration
 DATABASE_NAME = 'chiikawa_items.db'
 CHIIKAWA_URL = "https://chiikawamarket.jp/collections/newitems"
@@ -26,12 +28,14 @@ CLIENT_PORT = 3001
 
 app = Flask(__name__)
 
+
 # Database Operations
 def initialize_database() -> None:
     with sqlite3.connect(DATABASE_NAME) as conn:
         c = conn.cursor()
         c.execute('''CREATE TABLE IF NOT EXISTS items
                      (name TEXT, photo_url TEXT, price TEXT, product_url TEXT, date_added TEXT, is_latest INTEGER, is_sold_out INTEGER, product_number TEXT)''')
+
 
 def store_items(items: List[Product]) -> None:
     with sqlite3.connect(DATABASE_NAME) as conn:
@@ -43,17 +47,22 @@ def store_items(items: List[Product]) -> None:
                 VALUES (?, ?, ?, ?, ?, 1, ?, ?)
             """, (item['name'], item['photo_url'], item['price'], item['product_url'], datetime.now().isoformat(), item['is_sold_out'], item['product_number']))
 
+
 def get_stored_items() -> List[Product]:
     with sqlite3.connect(DATABASE_NAME) as conn:
         c = conn.cursor()
-        c.execute("SELECT name, photo_url, price, product_url, is_sold_out, product_number FROM items WHERE is_latest = 1")
+        c.execute(
+            "SELECT name, photo_url, price, product_url, is_sold_out, product_number FROM items WHERE is_latest = 1")
         return [{'name': row[0], 'photo_url': row[1], 'price': row[2], 'product_url': row[3], 'is_sold_out': bool(row[4]), 'product_number': row[5]} for row in c.fetchall()]
 
 # Web Scraping
+
+
 def fetch_website_content(url: str, page: int = 1) -> str:
     full_url = f"{url}?page={page}" if page > 1 else url
     response: requests.Response = requests.get(full_url)
     return response.text
+
 
 def get_max_page_number(html_content: str) -> int:
     soup = BeautifulSoup(html_content, 'html.parser')
@@ -63,9 +72,10 @@ def get_max_page_number(html_content: str) -> int:
         return int(last_page.text)
     return 1  # If no pagination found, assume only one page
 
+
 def parse_items(html_content: str) -> List[Product]:
     soup: BeautifulSoup = BeautifulSoup(html_content, 'html.parser')
-    items: List[Any] = soup.find_all('div', class_='product--root')
+    items: List[Tag] = soup.find_all('div', class_='product--root')
 
     products: List[Product] = []
 
@@ -75,9 +85,11 @@ def parse_items(html_content: str) -> List[Product]:
         product_number = product_url.split('/')[-1] if product_url else ''
 
         img_tag = item.find('img', class_='lazyload')
-        photo_url = img_tag['data-src'].replace('{width}', '1200') if img_tag and 'data-src' in img_tag.attrs else ''
+        photo_url = img_tag['data-src'].replace(
+            '{width}', '1200') if img_tag and 'data-src' in img_tag.attrs else ''
 
-        sold_out_label = item.find('div', class_='product--label', string='売り切れ')
+        sold_out_label = item.find(
+            'div', class_='product--label', string='売り切れ')
         is_sold_out = bool(sold_out_label)
 
         product: Product = {
@@ -88,7 +100,7 @@ def parse_items(html_content: str) -> List[Product]:
             'is_sold_out': is_sold_out,
             'product_number': product_number
         }
-        
+
         products.append(product)
 
     return products
@@ -97,7 +109,8 @@ def parse_items(html_content: str) -> List[Product]:
 # Notification
 def send_notification(new_items: List[Product]) -> None:
     print("New items found:")
-    notification_text = "\n".join([f"{item['name']} - {item['price']}" for item in new_items])
+    notification_text = "\n".join(
+        [f"{item['name']} - {item['price']}" for item in new_items])
     print(notification_text)
 
     Notifier.notify(
@@ -106,18 +119,20 @@ def send_notification(new_items: List[Product]) -> None:
         open=CHIIKAWA_URL,
         sound='Blow'
     )
-    
+
     webbrowser.open(f"http://127.0.0.1:{CLIENT_PORT}")
+
 
 # Main Logic
 def check_for_updates() -> None:
     html_content: str = fetch_website_content(CHIIKAWA_URL)
     max_page = get_max_page_number(html_content)
-    
+
     current_items: List[Product] = parse_items(html_content)
     stored_items: List[Product] = get_stored_items()
 
-    new_items: List[Product] = [item for item in current_items if item['product_url'] not in [stored_item['product_url'] for stored_item in stored_items]]
+    new_items: List[Product] = [item for item in current_items if item['product_url'] not in [
+        stored_item['product_url'] for stored_item in stored_items]]
 
     if not new_items:
         print(f"No new items found on the first page at {datetime.now()}")
@@ -129,16 +144,21 @@ def check_for_updates() -> None:
         print(f"Fetching page {page} of {max_page}")
         page_content = fetch_website_content(CHIIKAWA_URL, page)
         page_items = parse_items(page_content)
-        page_new_items = [item for item in page_items if item['product_url'] not in [stored_item['product_url'] for stored_item in stored_items]]
+        page_new_items = [item for item in page_items if item['product_url'] not in [
+            stored_item['product_url'] for stored_item in stored_items]]
         all_new_items.extend(page_new_items)
 
-    store_items(all_new_items)  # This will now set all existing items as not latest, and new items as latest
+    # This will now set all existing items as not latest, and new items as latest
+    store_items(all_new_items)
     send_notification(all_new_items)
-    print(f"Found and stored {len(all_new_items)} new items at {datetime.now()}")
+    print(
+        f"Found and stored {len(all_new_items)} new items at {datetime.now()}")
+
 
 def job():
     print(f"Checking for updates at {datetime.now()}")
     check_for_updates()
+
 
 def run_scheduler():
     print("Starting the scheduler...")
@@ -148,6 +168,7 @@ def run_scheduler():
     while True:
         schedule.run_pending()
         time.sleep(1)
+
 
 # Flask Routes
 @app.route('/')
@@ -302,6 +323,7 @@ def index():
 
 def run_flask():
     app.run(debug=True, use_reloader=False, port=CLIENT_PORT)
+
 
 if __name__ == "__main__":
     initialize_database()
