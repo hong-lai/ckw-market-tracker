@@ -8,6 +8,7 @@ import schedule
 from pync import Notifier
 from flask import Flask, render_template_string
 import threading
+import webbrowser
 
 # Configuration
 DATABASE_NAME = 'chiikawa_items.db'
@@ -87,6 +88,8 @@ def send_notification(new_items: List[Dict[str, str]]) -> None:
         open=CHIIKAWA_URL,
         sound='Blow'
     )
+    
+    webbrowser.open("http://127.0.0.1:5000")
 
 # Main Logic
 def check_for_updates() -> None:
