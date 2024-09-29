@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import List, Dict, Any
 import schedule
 from pync import Notifier
-from flask import Flask, render_template_string
+from flask import Flask, render_template_string, request
 import threading
 import webbrowser
 
@@ -22,23 +22,23 @@ def initialize_database() -> None:
     with sqlite3.connect(DATABASE_NAME) as conn:
         c = conn.cursor()
         c.execute('''CREATE TABLE IF NOT EXISTS items
-                     (name TEXT, photo_url TEXT, price TEXT, product_url TEXT, date_added TEXT, is_latest INTEGER)''')
+                     (name TEXT, photo_url TEXT, price TEXT, product_url TEXT, date_added TEXT, is_latest INTEGER, is_sold_out INTEGER, product_number TEXT)''')
 
 def store_items(items: List[Dict[str, str]]) -> None:
     with sqlite3.connect(DATABASE_NAME) as conn:
         c = conn.cursor()
-        # Set all existing items as not latest
         c.execute("UPDATE items SET is_latest = 0")
-        # Insert new items as latest
         for item in items:
-            c.execute("INSERT INTO items (name, photo_url, price, product_url, date_added, is_latest) VALUES (?, ?, ?, ?, ?, 1)",
-                      (item['name'], item['photo_url'], item['price'], item['product_url'], datetime.now().isoformat()))
+            c.execute("""
+                INSERT INTO items (name, photo_url, price, product_url, date_added, is_latest, is_sold_out, product_number)
+                VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+            """, (item['name'], item['photo_url'], item['price'], item['product_url'], datetime.now().isoformat(), item['is_sold_out'], item['product_number']))
 
 def get_stored_items() -> List[Dict[str, str]]:
     with sqlite3.connect(DATABASE_NAME) as conn:
         c = conn.cursor()
-        c.execute("SELECT name, photo_url, price, product_url FROM items WHERE is_latest = 1")
-        return [{'name': row[0], 'photo_url': row[1], 'price': row[2], 'product_url': row[3]} for row in c.fetchall()]
+        c.execute("SELECT name, photo_url, price, product_url, is_sold_out, product_number FROM items WHERE is_latest = 1")
+        return [{'name': row[0], 'photo_url': row[1], 'price': row[2], 'product_url': row[3], 'is_sold_out': bool(row[4]), 'product_number': row[5]} for row in c.fetchall()]
 
 # Web Scraping
 def fetch_website_content(url: str, page: int = 1) -> str:
@@ -62,19 +62,26 @@ def parse_items(html_content: str) -> List[Dict[str, str]]:
     for item in items:
         anchor_tag = item.find('a', href=True)
         product_url = f"https://chiikawamarket.jp{anchor_tag['href']}" if anchor_tag else ''
+        product_number = product_url.split('/')[-1] if product_url else ''
 
         img_tag = item.find('img', class_='lazyload')
         photo_url = img_tag['data-src'].replace('{width}', '1200') if img_tag and 'data-src' in img_tag.attrs else ''
+
+        sold_out_label = item.find('div', class_='product--label', string='売り切れ')
+        is_sold_out = bool(sold_out_label)
 
         product: Dict[str, str] = {
             'name': item.find('h2', class_='product_name').text.strip(),
             'photo_url': photo_url,
             'price': item.find('div', class_='product_price').text.strip(),
-            'product_url': product_url
+            'product_url': product_url,
+            'is_sold_out': is_sold_out,
+            'product_number': product_number
         }
         products.append(product)
 
     return products
+
 
 # Notification
 def send_notification(new_items: List[Dict[str, str]]) -> None:
@@ -134,7 +141,12 @@ def run_scheduler():
 # Flask Routes
 @app.route('/')
 def index():
+    filter_option = request.args.get('filter', 'all')
     items = get_stored_items()
+    if filter_option == 'available':
+        items = [item for item in items if not item['is_sold_out']]
+    elif filter_option == 'sold_out':
+        items = [item for item in items if item['is_sold_out']]
     return render_template_string('''
         <!DOCTYPE html>
         <html lang="en">
@@ -180,6 +192,8 @@ def index():
                     width: 200px;
                     text-align: center;
                     transition: transform 0.3s ease;
+                    position: relative;
+                    overflow: hidden;
                 }
                 .product:hover {
                     transform: translateY(-5px);
@@ -202,11 +216,40 @@ def index():
                     font-weight: bold;
                     color: #FF9999;
                 }
+                .sold-out {
+                    position: absolute;
+                    top: 10px;
+                    right: -35px;
+                    background-color: #FF0000;
+                    color: white;
+                    padding: 5px 40px;
+                    transform: rotate(45deg);
+                    font-size: 0.8em;
+                    font-weight: bold;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+                }
+                .filter-container {
+                    text-align: center;
+                    margin-bottom: 20px;
+                }
+                .filter-container select {
+                    padding: 5px 10px;
+                    font-size: 1em;
+                    border-radius: 5px;
+                    border: 1px solid #FF9999;
+                    background-color: #FFF;
+                    color: #4A4A4A;
+                }
                 .chiikawa-footer {
                     text-align: center;
                     margin-top: 30px;
                     font-size: 0.9em;
                     color: #999;
+                }
+                .product_number {
+                    font-size: 0.8em;
+                    color: #999;
+                    margin-top: 5px;
                 }
             </style>
         </head>
@@ -215,13 +258,25 @@ def index():
                 <img src="https://chiikawamarket.jp/cdn/shop/files/welcome_320x.png?v=16266376846941523964" alt="Chiikawa Welcome">
             </div>
             <h1>🐹 Chiikawa Market Tracker 🐾</h1>
+            <div class="filter-container">
+                <label for="filter">Filter: </label>
+                <select id="filter" onchange="window.location.href='?filter=' + this.value">
+                    <option value="all" {% if filter_option == 'all' %}selected{% endif %}>All</option>
+                    <option value="available" {% if filter_option == 'available' %}selected{% endif %}>Available</option>
+                    <option value="sold_out" {% if filter_option == 'sold_out' %}selected{% endif %}>Sold Out</option>
+                </select>
+            </div>
             <div class="products-container">
                 {% for item in items %}
                 <div class="product">
+                    {% if item.is_sold_out %}
+                    <div class="sold-out">売り切れ</div>
+                    {% endif %}
                     <a href="{{ item.product_url }}" target="_blank">
                         <img src="https:{{ item.photo_url }}" alt="{{ item.name }}">
                         <h3>{{ item.name }}</h3>
                         <p>{{ item.price }}</p>
+                        <div class="product_number">{{ item.product_number }}</div>
                     </a>
                 </div>
                 {% endfor %}
@@ -231,7 +286,8 @@ def index():
             </div>
         </body>
         </html>
-    ''', items=items)
+    ''', items=items, filter_option=filter_option)
+
 
 def run_flask():
     app.run(debug=True, use_reloader=False)

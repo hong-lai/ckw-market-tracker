@@ -6,10 +6,14 @@ A Python application that monitors the Chiikawa Market website for new items, se
 
 - Automatically checks for new items on Chiikawa Market
 - Sends desktop notifications for new items
+- Automatically opens the web interface when new items are found
 - Web interface to view all tracked items
 - Fetches all available pages of new items
 - Efficiently checks for new items, stopping if the first page has no new content
 - Only displays the latest items in the web interface
+- Tracks and displays sold out status for items
+- Allows filtering items by availability (All, Available, Sold Out)
+
 
 ## Quick Start
 
