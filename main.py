@@ -14,6 +14,7 @@ import webbrowser
 DATABASE_NAME = 'chiikawa_items.db'
 CHIIKAWA_URL = "https://chiikawamarket.jp/collections/newitems"
 CHECK_INTERVAL_MINUTES = 5
+CLIENT_PORT = 3001
 
 app = Flask(__name__)
 
@@ -96,7 +97,7 @@ def send_notification(new_items: List[Dict[str, str]]) -> None:
         sound='Blow'
     )
     
-    webbrowser.open("http://127.0.0.1:5000")
+    webbrowser.open(f"http://127.0.0.1:{CLIENT_PORT}")
 
 # Main Logic
 def check_for_updates() -> None:
@@ -290,7 +291,7 @@ def index():
 
 
 def run_flask():
-    app.run(debug=True, use_reloader=False)
+    app.run(debug=True, use_reloader=False, port=CLIENT_PORT)
 
 if __name__ == "__main__":
     initialize_database()
