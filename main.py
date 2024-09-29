@@ -3,12 +3,20 @@ from bs4 import BeautifulSoup
 import time
 import sqlite3
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import TypedDict, List, Dict, Any
 import schedule
 from pync import Notifier
 from flask import Flask, render_template_string, request
 import threading
 import webbrowser
+
+class Product(TypedDict):
+    name: str
+    photo_url: str
+    price: str
+    product_url: str
+    is_sold_out: bool
+    product_number: str
 
 # Configuration
 DATABASE_NAME = 'chiikawa_items.db'
@@ -25,7 +33,7 @@ def initialize_database() -> None:
         c.execute('''CREATE TABLE IF NOT EXISTS items
                      (name TEXT, photo_url TEXT, price TEXT, product_url TEXT, date_added TEXT, is_latest INTEGER, is_sold_out INTEGER, product_number TEXT)''')
 
-def store_items(items: List[Dict[str, str]]) -> None:
+def store_items(items: List[Product]) -> None:
     with sqlite3.connect(DATABASE_NAME) as conn:
         c = conn.cursor()
         c.execute("UPDATE items SET is_latest = 0")
@@ -35,7 +43,7 @@ def store_items(items: List[Dict[str, str]]) -> None:
                 VALUES (?, ?, ?, ?, ?, 1, ?, ?)
             """, (item['name'], item['photo_url'], item['price'], item['product_url'], datetime.now().isoformat(), item['is_sold_out'], item['product_number']))
 
-def get_stored_items() -> List[Dict[str, str]]:
+def get_stored_items() -> List[Product]:
     with sqlite3.connect(DATABASE_NAME) as conn:
         c = conn.cursor()
         c.execute("SELECT name, photo_url, price, product_url, is_sold_out, product_number FROM items WHERE is_latest = 1")
@@ -55,11 +63,12 @@ def get_max_page_number(html_content: str) -> int:
         return int(last_page.text)
     return 1  # If no pagination found, assume only one page
 
-def parse_items(html_content: str) -> List[Dict[str, str]]:
+def parse_items(html_content: str) -> List[Product]:
     soup: BeautifulSoup = BeautifulSoup(html_content, 'html.parser')
     items: List[Any] = soup.find_all('div', class_='product--root')
 
-    products: List[Dict[str, str]] = []
+    products: List[Product] = []
+
     for item in items:
         anchor_tag = item.find('a', href=True)
         product_url = f"https://chiikawamarket.jp{anchor_tag['href']}" if anchor_tag else ''
@@ -71,7 +80,7 @@ def parse_items(html_content: str) -> List[Dict[str, str]]:
         sold_out_label = item.find('div', class_='product--label', string='売り切れ')
         is_sold_out = bool(sold_out_label)
 
-        product: Dict[str, str] = {
+        product: Product = {
             'name': item.find('h2', class_='product_name').text.strip(),
             'photo_url': photo_url,
             'price': item.find('div', class_='product_price').text.strip(),
@@ -79,13 +88,14 @@ def parse_items(html_content: str) -> List[Dict[str, str]]:
             'is_sold_out': is_sold_out,
             'product_number': product_number
         }
+        
         products.append(product)
 
     return products
 
 
 # Notification
-def send_notification(new_items: List[Dict[str, str]]) -> None:
+def send_notification(new_items: List[Product]) -> None:
     print("New items found:")
     notification_text = "\n".join([f"{item['name']} - {item['price']}" for item in new_items])
     print(notification_text)
@@ -104,10 +114,10 @@ def check_for_updates() -> None:
     html_content: str = fetch_website_content(CHIIKAWA_URL)
     max_page = get_max_page_number(html_content)
     
-    current_items: List[Dict[str, str]] = parse_items(html_content)
-    stored_items: List[Dict[str, str]] = get_stored_items()
+    current_items: List[Product] = parse_items(html_content)
+    stored_items: List[Product] = get_stored_items()
 
-    new_items: List[Dict[str, str]] = [item for item in current_items if item['product_url'] not in [stored_item['product_url'] for stored_item in stored_items]]
+    new_items: List[Product] = [item for item in current_items if item['product_url'] not in [stored_item['product_url'] for stored_item in stored_items]]
 
     if not new_items:
         print(f"No new items found on the first page at {datetime.now()}")
