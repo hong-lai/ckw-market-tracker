@@ -1,5 +1,3 @@
-import os
-from pprint import pprint
 import requests
 from bs4 import BeautifulSoup, Tag
 import time
@@ -14,7 +12,8 @@ import webbrowser
 import logging
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class Product(TypedDict):
@@ -53,7 +52,8 @@ def store_items(items: List[Product]) -> None:
 def get_stored_items() -> List[Product]:
     with sqlite3.connect(DATABASE_NAME) as conn:
         c = conn.cursor()
-        c.execute("SELECT name, photo_url, price, product_url, is_sold_out, product_number FROM items WHERE is_latest = 1")
+        c.execute(
+            "SELECT name, photo_url, price, product_url, is_sold_out, product_number FROM items WHERE is_latest = 1")
         return [{'name': row[0], 'photo_url': row[1], 'price': row[2], 'product_url': row[3], 'is_sold_out': bool(row[4]), 'product_number': row[5]} for row in c.fetchall()]
 
 # Web Scraping
@@ -64,16 +64,15 @@ def fetch_website_content(url: str, page: int = 1) -> str:
 
 def get_max_page_number(html_content: str) -> int:
     soup = BeautifulSoup(html_content, 'html.parser')
-    pagination = soup.find('div', class_='pagination--root')
+    pagination = soup.find('ul', class_='pagination__list list-unstyled')
     if pagination:
-        last_page = pagination.find_all('li', class_='pagination--number')[-1]
+        last_page = pagination.find_all('li')[-2]
         return int(last_page.text)
     return 1  # If no pagination found, assume only one page
 
 def parse_items(html_content: str) -> List[Product]:
     soup: BeautifulSoup = BeautifulSoup(html_content, 'html.parser')
-    items: List[Tag] = soup.find_all('div', class_='product--root')
-
+    items: List[Tag] = soup.find('ul', id='product-grid').findChildren('li')
     products: List[Product] = []
 
     for item in items:
@@ -81,16 +80,18 @@ def parse_items(html_content: str) -> List[Product]:
         product_url = f"https://chiikawamarket.jp{anchor_tag['href']}" if anchor_tag else ''
         product_number = product_url.split('/')[-1] if product_url else ''
 
-        img_tag = item.find('img', class_='lazyload')
-        photo_url = img_tag['data-src'].replace('{width}', '1200') if img_tag and 'data-src' in img_tag.attrs else ''
+        img_tag = item.find('img', class_='motion-reduce')
+        photo_url = img_tag['src']
 
-        sold_out_label = item.find('div', class_='product--label', string='売り切れ')
+        sold_out_label = item.find(
+            'span', attrs={'class': lambda x: 'badge badge--bottom-left' in x if x else False}, string='売り切れ')
+
         is_sold_out = bool(sold_out_label)
 
         product: Product = {
-            'name': item.find('h2', class_='product_name').text.strip(),
+            'name': anchor_tag.text.strip(),
             'photo_url': photo_url,
-            'price': item.find('div', class_='product_price').text.strip(),
+            'price': item.find('span', class_='price-item price-item--regular').text.strip(),
             'product_url': product_url,
             'is_sold_out': is_sold_out,
             'product_number': product_number
@@ -103,7 +104,8 @@ def parse_items(html_content: str) -> List[Product]:
 # Notification
 def send_notification(new_items: List[Product]) -> None:
     logger.info("New items found:")
-    notification_text = "\n".join([f"{item['name']} - {item['price']}" for item in new_items])
+    notification_text = "\n".join(
+        [f"{item['name']} - {item['price']}" for item in new_items])
     logger.info(notification_text)
 
     Notifier.notify(
@@ -113,7 +115,7 @@ def send_notification(new_items: List[Product]) -> None:
         sound='Blow',
         contentImage='chiikawa.png'
     )
-    
+
     webbrowser.open(f"http://127.0.0.1:{CLIENT_PORT}")
 
 # Main Logic
@@ -125,11 +127,13 @@ def check_for_updates() -> None:
     logger.info("Fetching page 1")
     current_items: List[Product] = parse_items(html_content)
     stored_items: List[Product] = get_stored_items()
-    
-    new_items: List[Product] = [item for item in current_items if item['product_number'] not in [stored_item['product_number'] for stored_item in stored_items]]
+
+    new_items: List[Product] = [item for item in current_items if item['product_number'] not in [
+        stored_item['product_number'] for stored_item in stored_items]]
 
     if not new_items:
-        logger.info(f"No new items found on the first page at {datetime.now()}")
+        logger.info(
+            f"No new items found on the first page at {datetime.now()}")
         return
 
     all_new_items = new_items.copy()
